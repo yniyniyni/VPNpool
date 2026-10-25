@@ -431,6 +431,44 @@ expect_true "table gone" sh -c '! nft list table inet vpnpool'
 expect_eq "rule gone" "$(ip rule show | gcount 'fwmark 0x400000/0x400000')" 0
 end
 
+# ---- DNS-leak guard: dnsmasq follows the routing (route.sh up/down) ----
+# two dnsmasq instances as the init script leaves them: A is ours to point at sing-box, B has
+# upstreams someone else set (no-resolv: podkop) and is left alone
+DM="$DS/dm"; rm -rf "$DM"; mkdir -p "$DM/a.d" "$DM/b.d"
+printf 'domain-needed\nconf-dir=%s/a.d\n' "$DM" > "$DM/dnsmasq.conf.cfgA"
+printf 'no-resolv\nserver=127.0.0.42\nconf-dir=%s/b.d\n' "$DM" > "$DM/dnsmasq.conf.cfgB"
+printf '#!/bin/sh\necho restart >> %s/restarts\n' "$DM" > "$DM/restart.sh"; chmod +x "$DM/restart.sh"
+dm_route() { VPNPOOL_DNSMASQ_CONFS="$DM/dnsmasq.conf.*" VPNPOOL_DNSMASQ_RESTART="$DM/restart.sh" sh /usr/libexec/vpnpool/route.sh "$1" >/dev/null 2>&1; }
+restarts() { cat "$DM/restarts" 2>/dev/null | grep -c restart; }
+uci set vpnpool.main.killswitch=0; uci set vpnpool.main.dns_protect=1; uci set vpnpool.main.dns_port=1607; uci commit vpnpool
+mkdir -p /tmp/vpnpool; echo '{"inbounds":[{"type":"direct","tag":"dns-in","listen":"127.0.0.1","listen_port":1607}]}' > /tmp/vpnpool/sing-box.json
+dm_route up; dm_route up
+begin "daemon/dns-guard-up-points-dnsmasq-at-sing-box"
+expect_eq "instance A: no-resolv + server=127.0.0.1#1607" "$(grep -v '^#' "$DM/a.d/vpnpool-dns.conf" 2>/dev/null | tr '\n' ' ')" 'no-resolv server=127.0.0.1#1607 '
+expect_true "instance B (upstreams set elsewhere) untouched" [ ! -e "$DM/b.d/vpnpool-dns.conf" ]
+expect_eq "dnsmasq restarted once (the second up changed nothing)" "$(restarts)" 1
+end
+dm_route down
+begin "daemon/dns-guard-down-gives-dnsmasq-back"
+expect_true "the file is gone" [ ! -e "$DM/a.d/vpnpool-dns.conf" ]
+expect_eq "dnsmasq restarted again" "$(restarts)" 2
+expect_true "routing is down too" sh -c '! nft list table inet vpnpool'
+end
+: > "$DM/restarts"
+echo '{"inbounds":[{"type":"tproxy","tag":"tproxy-in"}]}' > /tmp/vpnpool/sing-box.json
+dm_route up
+begin "daemon/dns-guard-needs-the-dns-inbound"   # dns_protect on, but the config has no dns-in
+expect_true "no file" [ ! -e "$DM/a.d/vpnpool-dns.conf" ]
+expect_eq "no restart" "$(restarts)" 0
+end
+echo '{"inbounds":[{"type":"direct","tag":"dns-in"}]}' > /tmp/vpnpool/sing-box.json
+dm_route up; uci set vpnpool.main.dns_protect=0; uci commit vpnpool; dm_route up
+begin "daemon/dns-guard-switched-off-removed-on-next-up"
+expect_true "no file" [ ! -e "$DM/a.d/vpnpool-dns.conf" ]
+expect_eq "on, then off: two restarts" "$(restarts)" 2
+end
+dm_route down
+
 # ---- per-node tests never touch the LAN selector (2.8); by node id, results keyed by it ----
 reset_state
 uci set vpnpool.main.speedtest_min_mem_kb=1; uci commit vpnpool

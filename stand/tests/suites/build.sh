@@ -18,11 +18,12 @@ run_build() {
 	reset_state
 	mock_on   # health prefilter curls every server: offline stand => all "unreachable" (unfiltered pool)
 	[ "${XRAY_FAKE_ON:-0}" = 1 ] && uci set vpnpool.main.xray_bin="$FAKE_XRAY" && uci commit vpnpool
+	[ "${DNSP_ON:-0}" = 1 ] && uci set vpnpool.main.dns_protect=1 && uci commit vpnpool
 	mkdir -p /tmp/vpnpool/sources
 	cp "$1" /tmp/vpnpool/sources/000.raw
 	[ -n "${2:-}" ] && cp "$2" /tmp/vpnpool/sources/001.raw
 	_t0=$(date +%s)
-	run_with_timeout 120 sh /usr/libexec/vpnpool/build.sh > "$T_STATE/build.out" 2>&1
+	VPNPOOL_RESOLV_AUTO="$T_STATE/build/resolv.auto" run_with_timeout 120 sh /usr/libexec/vpnpool/build.sh > "$T_STATE/build.out" 2>&1
 	BRC=$?
 	BSECS=$(( $(date +%s) - _t0 ))
 	# invariant as its own plain case (never hidden inside an xfail): the build must END
@@ -201,6 +202,27 @@ run_with_timeout 120 sh /usr/libexec/vpnpool/build.sh > "$T_STATE/build.out" 2>&
 begin "build/xhttp-gone-xray-config-removed"
 expect_good_config
 expect_true "no xray config in RAM or flash" sh -c '[ ! -e /tmp/vpnpool/xray.json ] && [ ! -e /etc/vpnpool/xray.json ]'
+end
+
+# ---- DNS-leak guard: dns-in through the tunnel, names the router needs via the provider ----
+printf '# Interface wan\nnameserver 192.0.2.53\nnameserver 127.0.0.1\nnameserver 192.0.2.54\n' > "$T_STATE/build/resolv.auto"
+printf '%s\n%s\n' "$GOOD" "vless://$U@node.example.net:443?security=tls&sni=node.example.net#ByName" > "$SUB"
+DNSP_ON=1 run_build "$SUB"
+begin "build/dns-protect-config"
+expect_good_config 3
+_c=$(cat /etc/vpnpool/sing-box.json 2>/dev/null)
+expect_jq "dns-in inbound on 127.0.0.1:1607" "$_c" '[.inbounds[] | select(.tag=="dns-in" and .type=="direct" and .listen=="127.0.0.1" and .listen_port==1607)] | length==1'
+expect_jq "the first route rule hands dns-in to the DNS module" "$_c" '.route.rules[0] == {inbound:["dns-in"], action:"hijack-dns"}'
+expect_jq "provider resolver = the first non-loopback nameserver" "$_c" '.dns.servers[0] == {type:"udp", tag:"wan", server:"192.0.2.53"}'
+expect_jq "LAN lookups: DoH through the proxy selector" "$_c" '.dns.servers[1] == {type:"https", tag:"remote", server:"1.1.1.1", detour:"proxy"} and (.dns.rules | last) == {inbound:["dns-in"], server:"remote"}'
+expect_jq "node names and the WAN-check hosts via the provider" "$_c" '.dns.rules[0].server=="wan" and (.dns.rules[0].domain | index("node.example.net") != null and index("cp.cloudflare.com") != null and index("connectivitycheck.gstatic.com") != null)'
+expect_jq "sing-box's own lookups and node dialling via the provider" "$_c" '.dns.final=="wan" and .route.default_domain_resolver=="wan"'
+end
+printf '# Interface wan\n' > "$T_STATE/build/resolv.auto"
+DNSP_ON=1 run_build "$SUB"
+begin "build/dns-protect-without-provider-resolver-stays-off"
+expect_good_config 3
+expect_jq "no dns-in, plain local DNS" "$(cat /etc/vpnpool/sing-box.json 2>/dev/null)" '([.inbounds[].tag] | index("dns-in") == null) and .dns.servers == [{type:"local", tag:"local"}]'
 end
 
 # ---- a second source whose body looks like JSON but isn't: parser.uc dies => 0 nodes ----

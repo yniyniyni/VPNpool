@@ -322,7 +322,11 @@ fi
 # XHTTP nodes: the generator also writes the xray sidecar's config ($XRAY_NEW; none = no XHTTP
 # node in this pool). Its name ends in .json: xray picks the config format by the file name.
 rm -f "$XRAY_NEW"
+# DNS-leak guard: the provider's resolvers, and the names the router must resolve without the
+# tunnel (subscription panels, the WAN check; the generator adds the node servers itself).
+SUB_HOSTS=$(ucode "$MODEL" subs 2>/dev/null | cut -f4 | sed -n 's#^[A-Za-z][A-Za-z0-9+.-]*://\([^/?#@]*@\)\{0,1\}\([^]/:?#[]*\).*#\2#p' | sort -u | tr '\n' ' ')
 VPNPOOL_PROBE_URL=$(primary_probe_url) VPNPOOL_SB_VERSION="$SB_VER" VPNPOOL_XRAY_CONF="$XRAY_NEW" \
+	VPNPOOL_WAN_DNS="$(wan_dns_servers | tr '\n' ' ')" VPNPOOL_DIRECT_NAMES="$SUB_HOSTS $WAN_CHECK_HOSTS" \
 	ucode /usr/libexec/vpnpool/generator.uc "$NB" > "$SB_CONF.new" 2>>"$SB_DATA/build.err"
 
 # Resilient validation. A SINGLE malformed node (unsupported flow, reality without

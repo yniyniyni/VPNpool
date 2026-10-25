@@ -287,7 +287,7 @@ LuCI (5 tabs) ── ubus/rpcd ── vpnpoold (ucode + shell, procd)
 ```
 
 The control plane is ours, the data plane is sing-box. Routing is by SNI sniffing — no
-fake-IP pool, no dnsmasq takeover.
+fake-IP pool. dnsmasq is only redirected with `dns_protect=1`, while routing is up.
 
 </details>
 
@@ -309,7 +309,8 @@ Everything lives in `/etc/config/vpnpool`, section `config vpnpool 'main'`.
 | `favorites_only` | `0` | The automatic choice uses only favourite nodes |
 | `dead_filter` / `dead_filter_strikes` / `dead_filter_tries` | `1` / `3` / `3` | Service filter for the auto-pool, failed cycles before demotion, retries per cycle |
 | `ipv6` | `block` | `block` = fail-closed IPv6 guard; `off` = don't touch IPv6 |
-| `killswitch` / `dns_protect` | `0` / `0` | Fail-closed IPv4 in `exclude` mode / LAN DNS through the tunnel |
+| `killswitch` / `dns_protect` | `0` / `0` | Fail-closed IPv4 in `exclude` mode / LAN DNS through the tunnel (see below) |
+| `dns_remote` / `dns_port` | `1.1.1.1` / `1607` | DoH server the LAN's lookups go to through the tunnel / sing-box's local DNS port |
 | `client_mode` | `all` | `all` / `exclude` / `include` per-device routing |
 | `antidpi` | `off` | `off` / `on` (`tls_fragment`) / `aggressive` (+ `tls_record_fragment`) |
 | `adaptive_routing` / `adaptive_max_per_run` | `0` / `8` | Auto-detect direct-blocked domains |
@@ -410,6 +411,26 @@ sha256 sums.
 - **Architectures:** aarch64, arm_cortex-a7, mipsel_24kc, mips_24kc, x86_64.
 - **Memory:** the binary is ~45 MB. Routers with 16 MB flash keep it in RAM (needs ≥ 256 MB RAM;
   re-fetched at boot), the installer checks free space and memory first.
+
+## 🔒 DNS-leak guard
+
+The LAN asks the router (dnsmasq), and dnsmasq asks the provider from the router itself — a path
+the tproxy rules never see, so the provider sees every name the devices look up.
+With `dns_protect=1` (*Settings → Protection → Send site name lookups through the VPN*):
+
+- While routing is up, each dnsmasq instance gets `no-resolv` + `server=127.0.0.1#1607` in its
+  conf-dir (`/tmp/dnsmasq.<cfg>.d/vpnpool-dns.conf`, RAM only). sing-box answers there with
+  DoH to `dns_remote` (default `1.1.1.1`) **through the tunnel**.
+- The node servers, the subscription panels and the router's WAN check are still resolved
+  through the provider's resolver (`/tmp/resolv.conf.d/resolv.conf.auto`): the tunnel is built
+  to them, so they can't depend on it.
+- DNS follows the routing policy. When routing comes down (VPN off, tunnel dead with the
+  kill-switch off), the file goes and dnsmasq asks the provider again. With the kill-switch
+  on, lookups only go through the tunnel. A reboot or a crash never leaves dnsmasq pointing
+  at nothing.
+- A dnsmasq instance whose upstreams were set elsewhere (`noresolv`, e.g. podkop) is left alone.
+- In the "only selected sites" mode, every lookup goes through the tunnel too, so CDNs pick
+  servers near the VPN exit for direct sites as well.
 
 ## 🛰️ XHTTP nodes (xray sidecar)
 

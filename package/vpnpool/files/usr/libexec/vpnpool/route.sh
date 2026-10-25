@@ -10,6 +10,59 @@
 # sniffing: only our listed domains go to "proxy", the rest go "direct".
 . /usr/libexec/vpnpool/lib.sh
 
+# ---- DNS-leak guard (uci dns_protect=1) ----
+# The LAN asks the router (dnsmasq), and dnsmasq asks the provider from the router itself — a
+# path the tproxy rules never see. While routing is up, every dnsmasq instance gets a conf file in
+# its conf-dir (RAM: /tmp/dnsmasq.<cfg>.d) that sends it to sing-box's dns-in inbound
+# (generator.uc: through the tunnel, the node / subscription / WAN-check names via the provider);
+# routing down removes it. So DNS follows the routing policy: kill-switch on -> lookups only
+# through the tunnel; off and the tunnel dead -> the provider again. RAM only: a reboot or a
+# crash never leaves dnsmasq pointed at a sing-box that isn't there. dnsmasq is restarted only
+# when the file changes. An instance whose upstreams someone else set (uci noresolv: podkop)
+# is left alone.
+DNSMASQ_CONFS=${VPNPOOL_DNSMASQ_CONFS:-/var/etc/dnsmasq.conf.*}
+DNSMASQ_RESTART=${VPNPOOL_DNSMASQ_RESTART:-/etc/init.d/dnsmasq restart}
+DNS_GUARD_FILE=vpnpool-dns.conf
+dnsmasq_dirs() {   # the conf-dir of every dnsmasq instance whose upstreams are its own
+	local c d
+	for c in $DNSMASQ_CONFS; do
+		[ -f "$c" ] || continue
+		grep -q '^no-resolv' "$c" && { log "route.sh: DNS-leak guard: $c has upstreams set elsewhere (no-resolv) — left alone"; continue; }
+		d=$(sed -n 's/^conf-dir=//p' "$c" | head -1); d=${d%%,*}
+		[ -n "$d" ] && [ -d "$d" ] && echo "$d"
+	done
+}
+dns_guard_on() {
+	local d f want changed=0
+	want=$(printf '# vpnpool DNS-leak guard (dns_protect): lookups through the VPN; removed when routing goes down\nno-resolv\nserver=127.0.0.1#%s\n' "$DNS_PORT")
+	for d in $(dnsmasq_dirs); do
+		f="$d/$DNS_GUARD_FILE"
+		[ "$(cat "$f" 2>/dev/null)" = "$want" ] && continue
+		printf '%s\n' "$want" > "$f.tmp" && mv -f "$f.tmp" "$f" && changed=1
+	done
+	[ "$changed" = 1 ] && { $DNSMASQ_RESTART >/dev/null 2>&1; log "route.sh: DNS-leak guard on: dnsmasq asks sing-box (127.0.0.1#$DNS_PORT)"; }
+	return 0
+}
+dns_guard_off() {
+	local c d changed=0
+	for c in $DNSMASQ_CONFS; do
+		[ -f "$c" ] || continue
+		d=$(sed -n 's/^conf-dir=//p' "$c" | head -1); d=${d%%,*}
+		[ -n "$d" ] && [ -f "$d/$DNS_GUARD_FILE" ] && rm -f "$d/$DNS_GUARD_FILE" && changed=1
+	done
+	[ "$changed" = 1 ] && { $DNSMASQ_RESTART >/dev/null 2>&1; log "route.sh: DNS-leak guard off: dnsmasq asks the provider again"; }
+	return 0
+}
+# on only when asked for AND the running config has the dns-in inbound (no provider resolver
+# known at build -> generator.uc made none)
+dns_guard() {
+	if [ "$DNS_PROTECT" = 1 ] && jq -e '[.inbounds[]? | select(.tag == "dns-in")] | length > 0' "$SB_CONF" >/dev/null 2>&1; then
+		dns_guard_on
+	else
+		dns_guard_off
+	fi
+}
+
 case "$1" in
 up)
 	# Build yield rules: skip traffic already marked by coexisting proxies so we
@@ -147,6 +200,7 @@ NFT
 
 	if apply_table "$CLIENT_SET" "$CLIENT_RULE" "$V6"; then
 		policy_route
+		dns_guard   # DNS follows the routing (on with it, off with it)
 		exit 0
 	fi
 	# The new rules were refused (e.g. a client address nft doesn't accept). Never "roll
@@ -155,6 +209,7 @@ NFT
 	if nft list table inet vpnpool >/dev/null 2>&1; then
 		log "route.sh: nft refused the new routing rules — the previous rules stay active"
 		policy_route
+		dns_guard
 		exit 1
 	fi
 	# No table at all. With the kill-switch on, fail closed anyway: the same marking without
@@ -162,6 +217,7 @@ NFT
 	if [ "$KILLSWITCH" = "1" ]; then
 		if apply_table "" "" "$V6" || apply_table "" "" ""; then
 			policy_route
+			dns_guard
 			log "route.sh: nft refused the routing rules — kill-switch: blocking table without per-client rules installed"
 			exit 1
 		fi
@@ -170,6 +226,7 @@ NFT
 	exit 1
 	;;
 down)
+	dns_guard_off
 	nft delete table inet vpnpool 2>/dev/null
 	ip rule del fwmark "${FWMARK}/${FWMARK}" lookup "$RT_TABLE" priority "$RT_PRIO" 2>/dev/null
 	ip route flush table "$RT_TABLE" 2>/dev/null

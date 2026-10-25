@@ -71,6 +71,14 @@ xray_bin() {
 	done
 	return 1
 }
+# ---- DNS-leak guard (uci dns_protect=1; generator.uc dns-in, route.sh dns_guard) ----
+# The provider's resolvers = what dnsmasq itself would ask (resolv.conf.auto, written by netifd).
+RESOLV_AUTO=${VPNPOOL_RESOLV_AUTO:-/tmp/resolv.conf.d/resolv.conf.auto}
+wan_dns_servers() {
+	awk '$1 == "nameserver" && $2 !~ /^(127\.|::1$|0\.0\.0\.0$)/ && !seen[$2]++ { print $2 }' "$RESOLV_AUTO" 2>/dev/null
+}
+# the hosts the router itself has to reach without the tunnel (lib.sh wan_alive)
+WAN_CHECK_HOSTS="cp.cloudflare.com connectivitycheck.gstatic.com"
 our_xray_pids() { pgrep -f "xray[^ ]* run -c $XRAY_CONF" 2>/dev/null; }
 
 # OUR sing-box processes (by our own -c config path — the RAM one, and the flash one a 1.x
@@ -299,6 +307,7 @@ KILLSWITCH=$(uci -q get vpnpool.main.killswitch); [ -n "$KILLSWITCH" ] || KILLSW
 # DNS-leak guard: route LAN DNS aimed at PUBLIC resolvers (dport 53, non-local dst)
 # through the tunnel instead of letting it egress directly. Default off (opt-in).
 DNS_PROTECT=$(uci -q get vpnpool.main.dns_protect); [ -n "$DNS_PROTECT" ] || DNS_PROTECT=0
+DNS_PORT=$(uci -q get vpnpool.main.dns_port); case "$DNS_PORT" in ''|*[!0-9]*) DNS_PORT=1607 ;; esac
 MODE=$(uci -q get vpnpool.main.mode); [ -n "$MODE" ] || MODE=selective
 # Per-client routing: all (every LAN client) | exclude (listed bypass VPN) |
 # include (only listed go through VPN). Clients are IPv4 addresses (uci list 'client').

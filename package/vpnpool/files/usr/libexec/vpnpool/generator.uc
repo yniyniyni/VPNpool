@@ -31,6 +31,16 @@ for (let n in nodes) {
 	delete n.id;
 	for (let k in keys(n)) if (substr(k, 0, 1) == '_') delete n[k];
 }
+// the node servers given by NAME (the DNS-leak guard resolves them through the provider: a node
+// can't be looked up through the tunnel it builds). Taken before the XHTTP nodes become socks
+// outbounds to 127.0.0.1 below.
+let NODE_HOSTS = [];
+function is_ip(h) { return match(h, /^[0-9.]+$/) || index(h, ':') >= 0; }
+for (let n in nodes) {
+	if (type(n) != 'object') continue;
+	for (let h in [ n.server, ...(map(n.peers ?? [], (p) => p?.address)) ])
+		if (type(h) == 'string' && length(h) && !is_ip(h) && index(NODE_HOSTS, h) < 0) push(NODE_HOSTS, h);
+}
 // a list of ids -> the tags of the nodes of THIS build (unknown ids are dropped)
 function tags_of(ids) {
 	let out = [];
@@ -453,6 +463,38 @@ if (dns_strategy != 'off')
 		servers: [ { type: 'local', tag: 'local' } ],
 		strategy: dns_strategy
 	};
+
+// DNS-leak guard (uci dns_protect=1). The LAN asks dnsmasq; route.sh points dnsmasq at the
+// dns-in inbound here while routing is up (and back at the provider when it goes down), and
+// sing-box answers through the tunnel: DoH to dns_remote via the "proxy" selector. Names that
+// must NOT need the tunnel go to the provider's resolver (VPNPOOL_WAN_DNS = resolv.conf.auto,
+// passed by build.sh): the node servers (the tunnel is built to them), the subscription panels
+// and the router's own WAN check (VPNPOOL_DIRECT_NAMES) — with the kill-switch on and every node
+// dead, the WAN check and the subscription refresh still resolve. sing-box's own lookups go
+// there too ("local" would ask dnsmasq, i.e. come back here). No known provider resolver -> no
+// guard (no dns-in, route.sh leaves dnsmasq alone).
+let wan_dns = filter(split(trim(getenv('VPNPOOL_WAN_DNS') ?? ''), /[ \t]+/), length);
+if (dns && opt('main', 'dns_protect', '0') == '1' && length(wan_dns)) {
+	let remote = opt('main', 'dns_remote', '1.1.1.1');
+	if (!match(remote, /^[0-9]{1,3}(\.[0-9]{1,3}){3}$/)) remote = '1.1.1.1';
+	let direct_names = [ ...NODE_HOSTS ];
+	for (let h in split(trim(getenv('VPNPOOL_DIRECT_NAMES') ?? ''), /[ \t]+/))
+		if (length(h) && !is_ip(h) && index(direct_names, h) < 0) push(direct_names, h);
+	dns.servers = [
+		{ type: 'udp', tag: 'wan', server: wan_dns[0] },
+		{ type: 'https', tag: 'remote', server: remote, detour: 'proxy' }
+	];
+	dns.rules = [];
+	if (length(direct_names)) push(dns.rules, { domain: direct_names, server: 'wan' });
+	push(dns.rules, { inbound: [ 'dns-in' ], server: 'remote' });
+	dns.final = 'wan';
+	// node servers given by name are dialled after a lookup through the provider too (explicit:
+	// the implicit outbound resolver is deprecated in 1.12 and gone in 1.14)
+	route.default_domain_resolver = 'wan';
+	push(inbounds, { type: 'direct', tag: 'dns-in', listen: '127.0.0.1',
+		listen_port: int(opt('main', 'dns_port', 1607)) });
+	unshift(rules, { inbound: [ 'dns-in' ], action: 'hijack-dns' });
+}
 
 // AmneziaWG / WireGuard endpoints log their whole device config, private and preshared keys
 // included, at debug level ("AWG IPC config: ..." in the engine): never below info with them
