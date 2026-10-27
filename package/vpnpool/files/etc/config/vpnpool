@@ -134,3 +134,7 @@ config routing 'routing'
 	# auto_domain: domains auto-detected as blocked-for-direct by adaptive routing
 	# (always routed through the proxy when adaptive_routing=1). Managed via the UI.
 	# list auto_domain 'example.com'
+	# GeoIP address lists (geoip.sh): loyalsoldier (srs, countries + services) | v2fly (countries) |
+	# url (any geoip.dat in geoip_url); the codes follow the mode like the community lists
+	option geoip_source 'loyalsoldier'
+	# list geoip 'ru'

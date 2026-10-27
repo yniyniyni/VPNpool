@@ -194,6 +194,7 @@ uci set vpnpool.main.enabled='1'; uci commit vpnpool
 **Routing**
 - Proxy **only** selected lists/domains, or **everything except** them
 - 24 auto-updating community lists ([itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains)) + your domains
+- GeoIP address lists: countries and services from [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip) or [v2fly/geoip](https://github.com/v2fly/geoip), or any `geoip.dat` by URL (see [below](#-geoip-address-lists))
 - Per-device rules picked from DHCP names, matched by MAC
 - Adaptive routing: finds sites blocked for direct access and routes them itself
 - Anti-DPI: TLS ClientHello fragmentation, off / on / aggressive
@@ -280,7 +281,7 @@ LuCI (5 tabs) ── ubus/rpcd ── vpnpoold (ucode + shell, procd)
              + :1606 (checks of one node at a time)
    outbound: urltest "auto" (ping + failover) + selector + nodes + direct
    endpoints[]: AmneziaWG / WireGuard peers (sing-box >= 1.13)
-   route   : sniff SNI → community SRS / domains → proxy (or direct in exclude mode)
+   route   : sniff SNI → community SRS / domains → GeoIP lists → proxy (or direct in exclude mode)
                                   ▲
    nftables (table inet vpnpool): mark LAN 80/443 → fwmark 0x400000 → table 142 →
    tproxy; yields to podkop; IPv6 fail-closed; per-client include/exclude
@@ -327,7 +328,7 @@ Everything lives in `/etc/config/vpnpool`, section `config vpnpool 'main'`.
 Lists kept by the app: `manual_node` (your own links), `hidden`, `auto_exclude` (left out of the
 automatic choice; every other node takes part, new ones too), `auto_member` (1.x: only these take
 part), `keep_auto` (node ids), `client`, `client_dev`, `probe_ua`; `config routing 'routing'` holds `community`,
-`domain`, `auto_domain`. Every subscription is its own section `config subscription` with `url`,
+`domain`, `auto_domain`, `geoip` (+ `geoip_source`, `geoip_url`). Every subscription is its own section `config subscription` with `url`,
 `name`, `enabled` and `mode` (`all` = every node, `pick` = only the node ids in `list pick`).
 Favourites: `/etc/vpnpool/favorites.map.json`; AmneziaWG nodes: `/etc/vpnpool/awg/<id>.conf`.
 A 1.x configuration is moved to this layout at install (a copy of the old one goes to
@@ -410,6 +411,36 @@ sha256 sums.
 - **Architectures:** aarch64, arm_cortex-a7, mipsel_24kc, mips_24kc, x86_64.
 - **Memory:** the binary is ~45 MB. Routers with 16 MB flash keep it in RAM (needs ≥ 256 MB RAM;
   re-fetched at boot), the installer checks free space and memory first.
+
+## 🌍 GeoIP address lists
+
+*Routes → Address lists of countries and services*: lists of a country's or a service's network addresses. Everything at those
+addresses follows the mode, including apps that never use a site name. In "only the chosen sites" mode the
+lists go through the VPN; in "everything except" mode they go directly (`ru` = Russian services as without
+the VPN).
+
+| Source | What it has | How the router uses it |
+|---|---|---|
+| `loyalsoldier` (default) | countries + `telegram`, `google`, `netflix`, `cloudflare`, `facebook`, `twitter`, `private`… | the ready-made sing-box rule-set `srs/<code>.srs` |
+| `v2fly` | countries + `private` | `text/<code>.txt` (a CIDR list), turned into a rule-set |
+| `url` | any `geoip.dat` (e.g. [runetfreedom](https://github.com/runetfreedom/russia-v2ray-rules-dat): `ru-blocked`) | the file is read on the router; only the codes you chose are decoded |
+
+- Downloaded at a build, at most once a day (at once when the source or the codes change):
+  raw.githubusercontent.com, then the jsDelivr mirror; directly, then through the tunnel if there is no answer.
+- sing-box gets them as **local** rule-sets (`/tmp/vpnpool/geoip/`), so a missing list never stops it. A code
+  the source does not have is only skipped; the page shows the state of each code
+  (`/tmp/vpnpool/geoip_status.json`).
+- A failed update keeps the last good copy. A copy is kept in flash (`/etc/vpnpool/geoip/`, rewritten only
+  when a list changed), so the lists are there after a reboot before the network is.
+- Address lists come after the rules by name: your sites and the automatically found ones win over them.
+- A `geoip.dat` is read whole into memory: it needs about twice its size free (16–23 MB files today;
+  limit `geoip_max_mb`, default 48).
+
+```sh
+uci set vpnpool.routing.geoip_source=loyalsoldier   # loyalsoldier | v2fly | url (+ geoip_url)
+uci add_list vpnpool.routing.geoip=ru
+uci commit vpnpool && kill -USR1 $(cat /var/run/vpnpool.pid)
+```
 
 ## 🛰️ XHTTP nodes (xray sidecar)
 

@@ -195,6 +195,7 @@ uci set vpnpool.main.enabled='1'; uci commit vpnpool
 **Маршрутизация**
 - Через VPN **только** выбранные списки/домены — или **всё, кроме** них
 - 24 автообновляемых списков ([itdoginfo/allow-domains](https://github.com/itdoginfo/allow-domains)) + свои домены
+- Списки адресов GeoIP: страны и сервисы из [Loyalsoldier/geoip](https://github.com/Loyalsoldier/geoip) или [v2fly/geoip](https://github.com/v2fly/geoip), либо любой `geoip.dat` по ссылке (см. [ниже](#-списки-адресов-geoip))
 - Правила по устройствам: выбор по имени из DHCP, привязка по MAC
 - Адаптивная маршрутизация: сама находит сайты, заблокированные напрямую, и пускает их через VPN
 - Анти-DPI: фрагментация TLS ClientHello, выкл / вкл / агрессивно
@@ -328,7 +329,7 @@ fake-IP и без перехвата dnsmasq.
 Списки, которые ведёт приложение: `manual_node` (ваши ссылки), `hidden`, `auto_exclude` (исключены
 из автовыбора; остальные участвуют, новые тоже), `auto_member` (1.x: участвуют только эти),
 `keep_auto` (id узлов), `client`, `client_dev`, `probe_ua`; в `config routing 'routing'` —
-`community`, `domain`, `auto_domain`. Каждая подписка — своя секция `config subscription` с
+`community`, `domain`, `auto_domain`, `geoip` (+ `geoip_source`, `geoip_url`). Каждая подписка — своя секция `config subscription` с
 `url`, `name`, `enabled` и `mode` (`all` — все узлы, `pick` — только id из `list pick`).
 Избранное — `/etc/vpnpool/favorites.map.json`. Настройки 1.x при установке переводятся в этот
 вид (копия старых — в `/etc/vpnpool/backup-1.x/`).
@@ -409,6 +410,35 @@ kill -USR2 $(cat /var/run/vpnpool.pid)   # заново скачать подп�
 - **Архитектуры:** aarch64, arm_cortex-a7, mipsel_24kc, mips_24kc, x86_64.
 - **Память:** бинарь ~45 МБ. На роутерах с 16 МБ флеша он живёт в ОЗУ (нужно от 256 МБ ОЗУ; скачивается
   заново при загрузке), установщик заранее проверяет место и память.
+
+## 🌍 Списки адресов GeoIP
+
+*Маршруты → Списки адресов стран и сервисов*: сетевые адреса страны или сервиса. Всё по этим адресам следует режиму,
+в том числе приложения, которые вообще не обращаются к сайтам по имени. В режиме «только выбранные сайты»
+списки идут через VPN, в режиме «всё, кроме» — напрямую (`ru` = российские сервисы работают как без VPN).
+
+| Источник | Что в нём | Как роутер его использует |
+|---|---|---|
+| `loyalsoldier` (по умолчанию) | страны + `telegram`, `google`, `netflix`, `cloudflare`, `facebook`, `twitter`, `private`… | готовый rule-set sing-box `srs/<код>.srs` |
+| `v2fly` | страны + `private` | `text/<код>.txt` (список CIDR), переводится в rule-set |
+| `url` | любой `geoip.dat` (например [runetfreedom](https://github.com/runetfreedom/russia-v2ray-rules-dat): `ru-blocked`) | файл читается на роутере, разбираются только выбранные коды |
+
+- Скачиваются при сборке не чаще раза в сутки (сразу, если поменялся источник или коды):
+  raw.githubusercontent.com, затем зеркало jsDelivr; напрямую, а без ответа — через туннель.
+- sing-box получает их как **локальные** rule-set (`/tmp/vpnpool/geoip/`), поэтому отсутствующий список
+  никогда не мешает ему стартовать. Код, которого у источника нет, просто пропускается; на странице видно
+  состояние каждого кода (`/tmp/vpnpool/geoip_status.json`).
+- Неудачное обновление оставляет последнюю рабочую копию. Копия хранится и на флеше (`/etc/vpnpool/geoip/`,
+  переписывается только при изменении), так что после перезагрузки списки есть ещё до появления сети.
+- Списки адресов стоят после правил по именам: ваши сайты и найденные автоматически важнее.
+- `geoip.dat` читается в память целиком: нужно примерно вдвое больше его размера свободной памяти
+  (сейчас файлы 16–23 МБ; предел `geoip_max_mb`, по умолчанию 48).
+
+```sh
+uci set vpnpool.routing.geoip_source=loyalsoldier   # loyalsoldier | v2fly | url (+ geoip_url)
+uci add_list vpnpool.routing.geoip=ru
+uci commit vpnpool && kill -USR1 $(cat /var/run/vpnpool.pid)
+```
 
 ## 🛰️ XHTTP-узлы (xray рядом с sing-box)
 

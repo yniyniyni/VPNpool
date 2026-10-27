@@ -12,7 +12,7 @@
 //   experimental.clash_api for the watchdog / LuCI.
 'use strict';
 
-import { readfile, writefile } from 'fs';
+import { readfile, writefile, stat } from 'fs';
 import { cursor } from 'uci';
 import { VALID_COMMUNITY } from './common.uc';
 
@@ -197,6 +197,26 @@ for (let c in communities) {
 	if (!SB_GE_114) rs.download_detour = 'direct';
 	push(rule_sets, rs);
 	push(comm_tags, tag);
+}
+
+// GeoIP lists (uci routing list geoip: ru, private, telegram, ...): geoip.sh (build.sh, before
+// this) leaves <code>.srs (Loyalsoldier, ready-made) or <code>.json (a source made from v2fly's
+// text list or from a geoip.dat) in GEOIP_DIR. LOCAL rule-sets: sing-box never has to download
+// them to start. A code without a file (not found, never downloaded) is left out — geoip.sh's
+// status says why. They take the same way as the community lists (listed_ob), AFTER every
+// rule by name: an address list is wide, a site named by the user or found by the adaptive
+// search must win over it (a blocked site hosted on a Russian address, mode "everything except
+// ru": the adaptive rule sends it through the VPN, the ru list would send it directly).
+let GEOIP_DIR = getenv('VPNPOOL_GEOIP_DIR') ?? '/tmp/vpnpool/geoip';
+let geo_tags = [];
+for (let c in as_array(uci.get('vpnpool', 'routing', 'geoip'))) {
+	if (type(c) != 'string' || !match(c, /^[a-z0-9][a-z0-9_-]{0,63}$/) || index(geo_tags, 'geoip-' + c) >= 0) continue;
+	let f = null, fmt = null;
+	if (stat(GEOIP_DIR + '/' + c + '.srs')?.type == 'file') { f = GEOIP_DIR + '/' + c + '.srs'; fmt = 'binary'; }
+	else if (stat(GEOIP_DIR + '/' + c + '.json')?.type == 'file') { f = GEOIP_DIR + '/' + c + '.json'; fmt = 'source'; }
+	if (!f) continue;
+	push(rule_sets, { type: 'local', tag: 'geoip-' + c, format: fmt, path: f });
+	push(geo_tags, 'geoip-' + c);
 }
 
 // collect node tags
@@ -402,6 +422,8 @@ for (let d in auto_domains)
 	if (length(d)) push(auto_dom_clean, d);
 if (adaptive == '1' && length(auto_dom_clean))
 	push(rules, { domain_suffix: auto_dom_clean, outbound: 'proxy' });
+if (length(geo_tags))
+	push(rules, { rule_set: geo_tags, outbound: listed_ob });
 
 let route = {
 	rules: rules,

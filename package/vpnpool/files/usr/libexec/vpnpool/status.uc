@@ -408,6 +408,10 @@ printf('%J\n', {
 	manual_nodes: as_list(M.manual_node, true),
 	auto_domains: as_list(RT.auto_domain, true),
 	communities: as_list(RT.community, true),
+	geoip: as_list(RT.geoip, true),
+	geoip_source: RT.geoip_source ?? 'loyalsoldier',
+	geoip_url: RT.geoip_url ?? '',
+	geoip_status: read_json(SB + '/geoip_status.json', null),   // geoip.sh: per code ok / why not
 	// ---- legacy fields of the older screens (stage 7 drops them): tags instead of ids, one
 	// "primary" subscription (the first one that takes every node), extra ones, pick sources
 	subscription: primary ? { url: primary.url, expire: primary.expire, used: primary.used ?? 0, total: primary.total ?? 0 }
