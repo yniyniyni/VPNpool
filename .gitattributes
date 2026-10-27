@@ -18,6 +18,7 @@ vpnpoold    text eol=lf
 *.apk       binary
 *.adb       binary
 *.srs       binary
+*.dat       binary
 *.db        binary
 *.png       binary
 *.jpg       binary

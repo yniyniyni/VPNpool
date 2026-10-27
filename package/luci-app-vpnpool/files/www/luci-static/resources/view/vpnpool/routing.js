@@ -66,6 +66,9 @@ var FIELDS = [
 	{ f: 'mode', o: 'mode.mode', t: 'str', v: function(st) { return st.mode === 'exclude' ? 'exclude' : 'selective'; } },
 	{ f: 'communities', o: COMMUNITY_OPT, t: 'set', at: 'l_countries.russia_inside', label: _('Ready-made lists'),
 	  v: function(st) { return Array.isArray(st.communities) ? st.communities : []; } },
+	{ f: 'geoip_source', o: 'geoip.geoip_source', t: 'str', v: function(st) { return st.geoip_source || 'loyalsoldier'; } },
+	{ f: 'geoip_url', o: 'geoip.geoip_url', t: 'str', v: function(st) { return st.geoip_url || ''; } },
+	{ f: 'geoip', o: 'geoip.geoip', t: 'lines', v: function(st) { return Array.isArray(st.geoip) ? st.geoip : []; } },
 	{ f: 'domains', o: 'sites.domains', t: 'lines', v: function(st) { return Array.isArray(st.domains) ? st.domains : []; } },
 	{ f: 'adaptive_routing', o: 'sites.adaptive_routing', t: 'bool', v: function(st) { return !!settings(st).adaptive_routing; } },
 	{ f: 'auto_domains', o: 'sites.auto_domains', t: 'lines', v: function(st) { return Array.isArray(st.auto_domains) ? st.auto_domains : []; } },
@@ -85,6 +88,32 @@ function siteName(v) {
 		if (!/^[a-z0-9_]([a-z0-9_\-]{0,61}[a-z0-9_])?$/.test(parts[i])) return null;
 	return s;
 }
+
+// Why a GeoIP list is not in use (geoip.sh status codes)
+var GEOIP_ERR = {
+	not_found: _('There is no such list at the source.'),
+	fetch_failed: _('Could not be downloaded. The router tries again with the next update.'),
+	bad_file: _('The source gave something that is not a list.'),
+	reverse_match: _('This list is an "everything except" list: not supported.'),
+	empty: _('The list is empty.'),
+	low_memory: _('Not enough free memory on the router to read this file.'),
+	no_url: _('Enter the address of the file.')
+};
+// The state of each GeoIP list after the last update, as text nodes
+var GeoipState = form.DummyValue.extend({
+	renderWidget: function() {
+		var gs = this.gstatus, codes = (gs && gs.codes) || {};
+		var rows = (this.codes || []).map(function(c) {
+			var r = codes[c], t;
+			if (!r) t = _('Not downloaded yet: it is downloaded after "Save".');
+			else if (r.ok && r.cached) t = _('In use (the saved copy: the last update failed).');
+			else if (r.ok) t = (r.n != null) ? _('In use: %d networks.').format(r.n) : _('In use.');
+			else t = GEOIP_ERR[r.error] || _('Not in use.');
+			return E('li', {}, [ E('b', {}, [ txt(c) ]), txt(' — ' + t) ]);
+		});
+		return rows.length ? E('ul', { 'class': 'vp-hint' }, rows) : E('p', { 'class': 'vp-hint' }, [ txt(_('No lists chosen.')) ]);
+	}
+});
 
 // A choice of a radio-card option: a bold title and a line under it (our own texts)
 function card(title, text) {
@@ -219,6 +248,29 @@ return view.extend({
 				o.default = '0';
 			});
 		});
+
+		// ---- GeoIP: address lists of countries and services
+		s = m.section(form.NamedSection, 'geoip', 'geoip', _('Address lists of countries and services'),
+			_('Lists of network addresses of a country or a service: they cover everything at those addresses, including apps that do not use site names. Kept up to date automatically (once a day).'));
+		o = s.option(Hint, 'hint_sel', '');
+		o.hint = _('The chosen address lists go through the VPN.');
+		o.depends('json.mode.mode', 'selective');
+		o = s.option(Hint, 'hint_exc', '');
+		o.hint = _('The chosen address lists go directly, past the VPN. For example "ru": Russian sites and services work as without the VPN.');
+		o.depends('json.mode.mode', 'exclude');
+		o = s.option(form.ListValue, 'geoip_source', _('Where from'));
+		o.value('loyalsoldier', _('Loyalsoldier: countries and services (telegram, google, netflix, cloudflare…)'));
+		o.value('v2fly', _('v2fly: countries'));
+		o.value('url', _('A list file of your own (by address)'));
+		o = s.option(form.Value, 'geoip_url', _('File address'), _('A link to an address file in the v2ray format (.dat), for example from runetfreedom/russia-v2ray-rules-dat (lists like ru-blocked).'));
+		o.placeholder = 'https://…/list.dat';
+		o.depends('geoip_source', 'url');
+		o = s.option(form.TextValue, 'geoip', _('Lists'), _('One code per line: a country (ru, de, us…), private, or a list of the source (telegram, google…).'));
+		o.rows = 3;
+		o.placeholder = 'ru';
+		o = s.option(GeoipState, 'geoip_state', _('State'));
+		o.codes = Array.isArray(st.geoip) ? st.geoip : [];
+		o.gstatus = st.geoip_status || null;
 
 		// ---- your sites
 		s = m.section(form.NamedSection, 'sites', 'sites', _('Your sites'));

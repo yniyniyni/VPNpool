@@ -322,6 +322,9 @@ fi
 # XHTTP nodes: the generator also writes the xray sidecar's config ($XRAY_NEW; none = no XHTTP
 # node in this pool). Its name ends in .json: xray picks the config format by the file name.
 rm -f "$XRAY_NEW"
+# GeoIP lists of the Routes page -> local rule-sets in $SB_DATA/geoip (a download at most once a
+# day, or when the set changed; generator.uc takes the files that are there)
+sh /usr/libexec/vpnpool/geoip.sh 2>>"$SB_DATA/build.err"
 VPNPOOL_PROBE_URL=$(primary_probe_url) VPNPOOL_SB_VERSION="$SB_VER" VPNPOOL_XRAY_CONF="$XRAY_NEW" \
 	ucode /usr/libexec/vpnpool/generator.uc "$NB" > "$SB_CONF.new" 2>>"$SB_DATA/build.err"
 

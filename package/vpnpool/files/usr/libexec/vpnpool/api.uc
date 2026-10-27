@@ -204,6 +204,8 @@ function chk_list(field, v, item) {
 }
 let L_DOMAIN = (x) => { let d = norm_domain(x); return d ? [ d, null ] : [ null, 'bad_domain' ]; };
 let L_COMM = (x) => (type(x) == 'string' && VALID_COMMUNITY[x]) ? [ x, null ] : [ null, 'bad_community' ];
+// a GeoIP list code (geoip.sh): ru, private, telegram, ru-blocked ... (lower-cased)
+let L_GEO = (x) => (type(x) == 'string' && match(lc(trim(x)), /^[a-z0-9][a-z0-9_-]{0,63}$/)) ? [ lc(trim(x)), null ] : [ null, 'bad_value' ];
 let L_IPV4 = (x) => (type(x) == 'string' && is_ipv4(trim(x))) ? [ trim(x), null ] : [ null, 'bad_ipv4' ];
 let L_MAC = (x) => (type(x) == 'string' && match(trim(x), /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
 	? [ lc(trim(x)), null ] : [ null, 'bad_mac' ];
@@ -280,6 +282,10 @@ const SCHEMA = {
 	domains:               { s: 'routing', o: 'domain', list: L_DOMAIN, a: 'USR1' },
 	auto_domains:          { s: 'routing', o: 'auto_domain', list: L_DOMAIN, a: 'USR1' },
 	communities:           { s: 'routing', o: 'community', list: L_COMM, a: 'USR1' },
+	// GeoIP lists (geoip.sh): where from, a geoip.dat of your own, the codes
+	geoip_source:          { s: 'routing', c: E('loyalsoldier', 'v2fly', 'url'), a: 'USR1' },
+	geoip_url:             { s: 'routing', c: (v) => chk_url(v, true), a: 'USR1' },
+	geoip:                 { s: 'routing', o: 'geoip', list: L_GEO, a: 'USR1' },
 	clients:               { s: 'main', o: 'client', list: L_IPV4, a: 'USR1' },
 	client_devices:        { s: 'main', o: 'client_dev', list: L_MAC, a: 'USR1' },
 	auto_members:          { s: 'main', o: 'auto_member', list: L_NODE, a: 'USR1' },

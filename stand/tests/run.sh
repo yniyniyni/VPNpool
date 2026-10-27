@@ -114,7 +114,7 @@ sub_section() {
 }
 
 # ---- suites ----
-ALL_SUITES="parser build rpcd sched adaptive fetch status daemon tgbot uitext awgdecode engine awg migrate"
+ALL_SUITES="parser build rpcd sched adaptive fetch status daemon tgbot uitext awgdecode engine awg migrate geoip"
 SUITES=${*:-$ALL_SUITES}
 START=$(date +%s)
 for s in $SUITES; do
