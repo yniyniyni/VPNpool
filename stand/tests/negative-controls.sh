@@ -156,6 +156,13 @@ ctl api-sub-probe-one-client rpcd fail 'rpcd/add/url-first-client-gets-xray-json
 # every URL of one add call gets its own time budget: the slow one eats LuCI's 20 s, the next is tried
 ctl api-sub-probe-budget-per-url rpcd fail 'rpcd/add/urls-share-one-time-budget ' \
 	"$LIBX/api.uc" "probe_by ??= time() + SUB_PROBE_SECS;" "probe_by = time() + SUB_PROBE_SECS;"
+# GeoIP: an error page stays as a list / addresses before the code are lost / the rule never added
+ctl geoip-error-page-kept geoip fail 'geoip/loyalsoldier-srs ' \
+	"$LIBX/geoip.sh" '	rm -f "$2"   # an error page is not a list' '	:'
+ctl geoip-dat-code-after-addresses geoip fail 'geoip/uc-dat-only-the-codes-asked-for ' \
+	"$LIBX/geoip.uc" '				else if (code == null) push(early, [ s, k ]);' ''
+ctl generator-no-geoip-rule geoip fail 'geoip/generator-local-rule-sets ' \
+	"$LIBX/generator.uc" '	push(rules, { rule_set: geo_tags, outbound: listed_ob });' '	;'
 # every case that inspects the installed config goes red
 ctl build-config-not-installed build fail 'build/clean-subscription ;build/poison-port-70000 ;build/poison-reserved-tag-direct ;build/poison-reserved-tag-auto ;build/poison-reserved-tag-proxy ;build/poison-duplicate-tags ;build/not-frozen-new-node-arrives-despite-poison ;build/xhttp-builds ;build/xhttp-without-xray-deferred ;build/xhttp-with-xray-socks-to-sidecar ;build/xhttp-node-xray-refuses-is-dropped-alone ;build/xhttp-gone-xray-config-removed ;build/junk-json-source-does-not-empty-pool ;build/json-source-long-short-id-no-panic ;build/awg-node-on-stock-engine-deferred ;build/unchanged-pool-no-flash-write ;build/changed-pool-flash-updated ;build/after-reboot-failed-build-keeps-flash-config ;build/node-test-selector-separate-from-proxy ;build/poison-json-source-unknown-field ;build/poison-json-endpoint-unknown-field ;build/generator-tags-reserved-in-parser ;build/status-file-lists-engine-drop ;build/nodes-carry-id-config-does-not ;build/log-counts-the-final-pool ;build/term-writes-interrupted ;build/model-inputs-sources-and-filters ;build/model-auto-members-and-dead-by-id ;build/model-favourites-only-and-preferred-default ;build/model-favourites-only-never-empties-the-pool ;build/model-active-favourites-join-the-pool ;build/model-excluded-ids-leave-the-automatic-choice ;build/model-excluding-every-node-is-ignored ;build/model-excluded-only-favourite-then-the-others ;build/model-excluded-member-leaves-the-member-list ' \
 	"$LIBX/build.sh" 'mv "$SB_CONF.new" "$SB_CONF"' 'rm -f "$SB_CONF.new"'

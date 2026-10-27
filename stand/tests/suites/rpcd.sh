@@ -526,6 +526,22 @@ begin "rpcd/set_config/valid-subset-writes"   # positive control for the all-or-
 expect_jq "saved" "$R" '.ok==true and .code=="saved"'
 expect_eq "written" "$(uci -q get vpnpool.main.failover_interval)" 90
 end
+# GeoIP lists: codes lower-cased, one signal to rebuild; a bad code / source / URL refuses the save
+reset_state; daemon_start
+rcall set_config '{"settings":{"geoip_source":"v2fly","geoip":["RU"," private ","ru"],"geoip_url":""}}'
+begin "rpcd/set_config/geoip-fields"
+expect_jq "saved" "$R" '.ok==true and .code=="saved"'
+expect_eq "source" "$(uci -q get vpnpool.routing.geoip_source)" v2fly
+expect_eq "codes lower-cased, trimmed, repeats dropped" "$(ulist vpnpool.routing.geoip | tr '\n' ' ')" 'ru private '
+expect_eq "one rebuild" "$(signals_seen USR1)" 1
+end
+reset_state; daemon_start
+rcall set_config '{"settings":{"geoip_source":"maxmind","geoip":["ru","no spaces"],"geoip_url":"ftp://x"}}'
+begin "rpcd/set_config/geoip-bad-values"
+expect_jq "every bad field named" "$R" '.ok==false and .code=="invalid" and .errors=={"geoip_source":"bad_value","geoip[1]":"bad_value","geoip_url":"bad_url"}'
+expect_eq "nothing written" "$(ulist vpnpool.routing.geoip)" ''
+end
+
 reset_state; daemon_start
 rcall set_config '{"settings":{"failover_interval":"90","domains":["a.example"],"clients":["999.1.1.1"]}}'
 begin "rpcd/set_config/all-or-nothing"
